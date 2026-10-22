@@ -12,9 +12,13 @@ Dieses Repository ist die isolierte Testkopie von
 - Keine echten Lobby-Beitritte oder anderen Spieländerungen ohne Freigabe des
   konkreten Tests durch den Nutzer. Mock-HTTP-Tests zuerst ausführen.
 - Keine Zugangsdaten, Browserprofile, Tokens oder Spielerhistorie committen.
-- HTTP-Annahme ist noch nicht implementiert. Ziel: Einladungen unabhängig vom
-  DOM lesen, per authentifizierter HTTP-Anfrage annehmen und Mitgliedschaft
-  eindeutig prüfen. Zunächst vorhandene Browser-Anmeldungen nutzen; erst danach
-  eine browserlose Sitzungsverwaltung untersuchen.
+- HTTP-Sitzungen in app/http_sessions.py verwenden. Browser nur zur einmaligen
+  Anmeldung öffnen und nach erfolgreicher Übernahme schließen. Keine Tokens in
+  Diagnose, API-Antworten, Logs, Git oder Befehlsargumente ausgeben.
+- Der Nutzer hat die Migration bestehender Anmeldungen freigegeben. Nur ausgewählte,
+  pausierte Quellsitzungen übernehmen; die Produktion darf dieselben Refresh-Tokens
+  danach nicht parallel erneuern. Migration über scripts/migrate_http_sessions.py.
+- Freigegebene Testaccounts: Mulich und dierote; kein Turnier läuft. Andere
+  Accounts oder echte Turniere nicht verändern. Scheibe für diesen Test frei wählbar.
 - Tests: `python -m pytest -q`; Browserfixtures benötigen Playwright Chromium
   Headless Shell. Die bestehenden Tests weiterhin ausführen.

@@ -2,5 +2,7 @@
 .env
 .venv
 data
+data-http-test
+.pytest_cache
 tests
 __pycache__

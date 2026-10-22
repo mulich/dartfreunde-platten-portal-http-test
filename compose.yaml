@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "18082:8000"
+      - "127.0.0.1:18082:8000"
     volumes:
       - ./data-http-test:/data
     shm_size: 1gb

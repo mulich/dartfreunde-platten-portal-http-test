@@ -1,7 +1,7 @@
 # Getrennte Testinstanz
 
 Dieses private Repository ist die Testkopie für die geplante HTTP-Annahme.
-Der HTTP-Mechanismus ist noch nicht implementiert. Das Produktivportal bleibt
+HTTP-Sitzungen und Einladungsannahme sind implementiert; siehe README und HTTP-TEST.md. Das Produktivportal bleibt
 unter Port 18080 und verwendet sein bisheriges Datenvolume.
 
 ## Lokaler Build auf dem Docker-Server

@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from app.invitations import AutoAcceptor, SCAN
 from app import invitations
 from app.recovery import observe_account
+from app.http_sessions import HttpSessions, SessionError, BOARDS
+from app import http_test
 
 DATA = Path(os.getenv("DATA_DIR", "data"))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -47,12 +49,15 @@ locks = {}
 starting = set()
 errors = {}
 playwright = None
+runtime_lock = asyncio.Lock()
 SETTINGS_FILE = DATA / 'automation.json'
 automation_settings = json.loads(SETTINGS_FILE.read_text()) if SETTINGS_FILE.exists() else {'hosts': ['rot', 'schwarz', 'blau']}
 acceptor = None
+http_service = None
 activation_tasks = set()
 activation_inflight = set()
 activation_generation = 0
+test_lobby_lock = asyncio.Lock()
 
 
 def player_profile(item):
@@ -65,9 +70,13 @@ def player_lock(ident):
     return locks.setdefault(ident, asyncio.Lock())
 
 
-async def start_player(ident):
+async def start_player(ident, *, login=False):
+    global playwright
     async with player_lock(ident):
         if registry.get(ident) and registry.get(ident).get('paused'):
+            return
+        if http_service and not login and await http_service.start(ident):
+            account_identities[ident] = http_service.account(ident).user_id
             return
         if ident in contexts:
             return
@@ -75,6 +84,9 @@ async def start_player(ident):
             raise HTTPException(404, "Spieler nicht gefunden")
         starting.add(ident)
         try:
+            async with runtime_lock:
+                if playwright is None:
+                    playwright = await async_playwright().start()
             context = await playwright.chromium.launch_persistent_context(
                 str(player_profile(registry.get(ident))), headless=True,
                 viewport={"width": 1280, "height": 800}, locale="de-DE",
@@ -85,6 +97,8 @@ async def start_player(ident):
             contexts[ident] = context
             account_identities.pop(ident, None)
             observe_account(context, ident, account_identities)
+            if http_service:
+                observe_http_login(context, ident)
             page = context.pages[-1] if context.pages else await context.new_page()
             await page.goto(AUTODARTS, wait_until="domcontentloaded", timeout=60000)
             if registry.get(ident).get('paused'):
@@ -102,6 +116,40 @@ async def start_player(ident):
             starting.discard(ident)
 
 
+def observe_http_login(context, ident):
+    captured = False
+    async def response(event):
+        nonlocal captured
+        url = urlsplit(event.url)
+        if (captured or url.netloc != 'api.autodarts.com' or event.status != 200
+                or url.path not in ('/auth/v1/login', '/auth/v1/refresh',
+                                    '/auth/v1/exchange', '/auth/v1/login/otp/verify')):
+            return
+        try:
+            tokens = await event.json()
+            if not isinstance(tokens, dict) or not tokens.get('refresh_token'):
+                return
+            captured = True
+            async def transfer():
+                try:
+                    async with player_lock(ident):
+                        if contexts.get(ident) is not context or registry.get(ident).get('paused'):
+                            return
+                        await http_service.adopt(ident, tokens)
+                        account_identities[ident] = http_service.account(ident).user_id
+                        contexts.pop(ident, None)
+                        await context.close()
+                        await http_service.start(ident)
+                except Exception:
+                    errors[ident] = 'HTTP-Anmeldung konnte nicht bestätigt werden. Anmeldung erneut öffnen.'
+            task = asyncio.create_task(transfer())
+            activation_tasks.add(task)
+            task.add_done_callback(activation_tasks.discard)
+        except Exception:
+            pass  # No authentication payloads in logs.
+    context.on('response', response)
+
+
 async def restore():
     # Sequential startup avoids a burst of Chromium processes on small hosts.
     for item in list(registry.items):
@@ -113,20 +161,23 @@ async def restore():
 
 @asynccontextmanager
 async def lifespan(app):
-    global playwright, acceptor
-    playwright = await async_playwright().start()
+    global playwright, acceptor, http_service
+    playwright = None  # HTTP-only startup needs no Playwright/Chromium process.
+    http_service = HttpSessions(registry, automation_settings, DATA)
     acceptor = AutoAcceptor(contexts, registry, locks, automation_settings, account_identities)
     task = asyncio.create_task(restore())
-    automation_task = asyncio.create_task(acceptor.run())
     yield
     task.cancel()
-    automation_task.cancel()
     for pending in list(activation_tasks):
         pending.cancel()
     await asyncio.gather(*activation_tasks, return_exceptions=True)
-    await asyncio.gather(task, automation_task, return_exceptions=True)
+    await asyncio.gather(task, return_exceptions=True)
+    await http_service.close()
+    http_service = None
     await asyncio.gather(*(c.close() for c in contexts.values()), return_exceptions=True)
-    await playwright.stop()
+    if playwright:
+        await playwright.stop()
+    playwright = None
 
 
 app = FastAPI(lifespan=lifespan)
@@ -149,7 +200,8 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "invitation_revision": invitation_revision()}
+    return {"status": "ok", "invitation_revision": invitation_revision(),
+            'session_mode': 'http', 'test_instance': True}
 
 
 def invitation_revision():
@@ -170,12 +222,50 @@ class Player(BaseModel):
     name: str = Field(min_length=1, max_length=60)
 
 
+@app.get('/api/http/peers/{ident}')
+async def http_peer_status(ident: str):
+    if not registry.get(ident) or not http_service.store.read(ident):
+        raise HTTPException(404,'HTTP-Sitzung nicht gefunden')
+    try:
+        return {'peers':await http_test.peers(http_service,ident)}
+    except SessionError as error:
+        raise HTTPException(409,{'code':error.code,'http_status':error.status})
+
+
+class HttpTestLobby(BaseModel):
+    host_ident: uuid.UUID
+    guest_ident: uuid.UUID
+    board_id: uuid.UUID
+
+
+@app.post('/api/http/test-lobby')
+async def http_create_test_lobby(body: HttpTestLobby):
+    for ident in (str(body.host_ident),str(body.guest_ident)):
+        if not registry.get(ident) or not http_service.store.read(ident):
+            raise HTTPException(404,'Beide Testaccounts zuerst anmelden')
+    async with test_lobby_lock:
+        try:
+            return await http_test.create_lobby(http_service,str(body.host_ident),str(body.guest_ident),str(body.board_id),DATA)
+        except SessionError as error:
+            raise HTTPException(409,{'code':error.code,'http_status':error.status})
+
+
+@app.get('/api/http/test-lobby')
+async def http_test_lobby_status():
+    try:
+        return await http_test.lobby_status(http_service,DATA)
+    except SessionError as error:
+        raise HTTPException(409,{'code':error.code,'http_status':error.status})
+
+
 @app.get("/api/players")
 async def list_players():
     return [{**p, "status": "starting" if p["id"] in starting else
-             "running" if p["id"] in contexts else "stopped",
+             "running" if p["id"] in contexts or (http_service and http_service.summary(p['id'])['active']) else "stopped",
              "auto_accept": p.get('auto_accept', False),
-             "automation": acceptor.status.get(p['id'], {}) if acceptor else {},
+             "automation": http_service.status.get(p['id'], {}) if http_service else {},
+             'browser_open': p['id'] in contexts,
+             'http_session': http_service.summary(p['id']) if http_service else {},
              "error": errors.get(p["id"])} for p in registry.items]
 
 
@@ -183,6 +273,8 @@ async def list_players():
 async def automation_diagnostics(ident: str):
     if not registry.get(ident):
         raise HTTPException(404, 'Spieler nicht gefunden')
+    if http_service and http_service.store.read(ident):
+        return {'invitation_revision':invitation_revision(), **http_service.summary(ident)}
     result = {'invitation_revision': invitation_revision(),
               'enabled': bool(registry.get(ident).get('auto_accept')),
               'identity_known': bool(account_identities.get(ident)),
@@ -223,6 +315,7 @@ async def automation_diagnostics(ident: str):
 
 class AutomationSettings(BaseModel):
     hosts: list[str] = Field(max_length=20)
+    boards: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=20)
 
 
 class AutoAcceptSetting(BaseModel):
@@ -271,7 +364,7 @@ async def tournament_sessions(body: TournamentSessions):
                 if generation != activation_generation:
                     continue
                 await start_player(ident)
-                if ident in contexts and generation == activation_generation:
+                if (ident in contexts or (http_service and http_service.summary(ident)['active'])) and generation == activation_generation:
                     saved = json.loads(file.read_text()) if file.exists() else {}
                     saved[key] = True
                     temp = file.with_suffix('.tmp')
@@ -305,6 +398,8 @@ async def pause_all():
     for item in registry.items:
         item['paused'] = True
     registry.save()
+    if http_service:
+        await asyncio.gather(*(http_service.stop(item['id']) for item in registry.items))
     failed = []
     for item in list(registry.items):
         async with player_lock(item['id']):
@@ -399,6 +494,7 @@ async def set_automation(settings: AutomationSettings):
     if any(len(name) > 100 for name in hosts):
         raise HTTPException(400, 'Accountname ist zu lang')
     automation_settings['hosts'] = hosts
+    automation_settings['boards'] = {k.strip().casefold():str(v) for k,v in settings.boards.items()}
     temp = (DATA / 'automation.json').with_suffix('.tmp')
     temp.write_text(json.dumps(automation_settings, ensure_ascii=False))
     temp.replace(DATA / 'automation.json')
@@ -451,12 +547,27 @@ async def start(ident: str):
     return {"ok": True}
 
 
+@app.post('/api/players/{ident}/login')
+async def login_browser(ident: str):
+    item = registry.get(ident)
+    if not item:
+        raise HTTPException(404, 'Spieler nicht gefunden')
+    item.pop('paused', None)
+    registry.save()
+    if http_service:
+        await http_service.stop(ident)
+    await start_player(ident, login=True)
+    return {'ok':True}
+
+
 @app.post("/api/players/{ident}/stop")
 async def stop(ident: str):
     if not registry.get(ident):
         raise HTTPException(404, "Spieler nicht gefunden")
     registry.get(ident)['paused'] = True
     registry.save()
+    if http_service:
+        await http_service.stop(ident)
     async with player_lock(ident):
         context = contexts.pop(ident, None)
         if context:
@@ -470,6 +581,12 @@ async def delete(ident: str):
     async with player_lock(ident):
         if not registry.get(ident):
             raise HTTPException(404, "Spieler nicht gefunden")
+        if http_service:
+            await http_service.stop(ident)
+            account = http_service.accounts.pop(ident, None)
+            if account:
+                await account.close()
+            http_service.store.delete(ident)
         context = contexts.pop(ident, None)
         if context:
             await context.close()

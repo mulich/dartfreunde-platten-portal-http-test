@@ -39,6 +39,28 @@ def client(tmp_path, monkeypatch):
 ORIGIN = {"origin": "http://testserver"}
 
 
+def test_saved_http_session_starts_without_launching_browser_and_hides_secrets(client):
+    from app import main
+    from app.http_sessions import HttpAccount
+    import base64,json
+    p=client.post('/api/players',json={'name':'HTTP User'},headers=ORIGIN).json()
+    payload=base64.urlsafe_b64encode(json.dumps({'sub':'own','preferred_username':'HTTP User'}).encode()).decode().rstrip('=')
+    main.http_service.account(p['id']).install({'access_token':'header.'+payload+'.sig',
+        'refresh_token':'must-not-be-public','expires_in':300})
+    async def wait(ident):
+        await asyncio.sleep(60)
+    main.http_service.run=wait
+    assert client.post('/api/players/'+p['id']+'/start',headers=ORIGIN).status_code==200
+    client.launch.assert_not_awaited()
+    result=client.get('/api/players').json()[0]
+    assert result['status']=='running' and not result['browser_open']
+    assert result['http_session']['authenticated']
+    assert 'must-not-be-public' not in str(client.get('/api/players').json())
+    assert 'must-not-be-public' not in str(client.get('/api/players/'+p['id']+'/automation-diagnostics').json())
+    assert client.post('/api/players/'+p['id']+'/stop',headers=ORIGIN).status_code==200
+    assert not main.http_service.summary(p['id'])['active']
+
+
 def test_emergency_recovery_only_targets_exact_accounts_and_is_idempotent(client):
     ids = []
     pages = []
