@@ -1,0 +1,9 @@
+services:
+  portal:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "18082:8000"
+    volumes:
+      - ./data-http-test:/data
+    shm_size: 1gb

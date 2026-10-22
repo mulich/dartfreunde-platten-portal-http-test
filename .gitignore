@@ -1,0 +1,6 @@
+.env
+.venv/
+data/
+data-http-test/
+__pycache__/
+.pytest_cache/

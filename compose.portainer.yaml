@@ -1,0 +1,14 @@
+services:
+  portal:
+    image: ${PORTAL_IMAGE:-ghcr.io/mulich/dartfreunde-platten-portal-http-test:latest}
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "${PORTAL_PORT:-18082}:8000"
+    volumes:
+      - portal-data:/data
+    shm_size: 1gb
+
+volumes:
+  portal-data:
+    name: dartfreunde-platten-portal-http-test-data
