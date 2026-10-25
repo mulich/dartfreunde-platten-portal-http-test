@@ -167,10 +167,11 @@ def test_password_and_code_login_adopt_tokens_without_storing_credentials(tmp_pa
 
 def test_friend_requests_only_from_allowed_boards_are_accepted(tmp_path):
     accepted = []
-    friends = [{'status': 'Incoming', 'user': {'id': 'blau-id', 'name': 'Blau'}},
-               {'status': 'Incoming', 'user': {'id': 'stranger', 'name': 'Fremder'}},
-               {'status': 'Accepted', 'user': {'id': 'rot-id', 'name': 'rot'}},
-               {'status': 'Sent', 'user': {'id': 'schwarz-id', 'name': 'schwarz'}}]
+    friends = [{'requestStatus': 'Incoming', 'status': 'Online', 'user': {'id': 'blau-id', 'name': 'Blau'}},
+               {'requestStatus': 'Incoming', 'status': 'Online', 'user': {'id': 'stranger', 'name': 'Fremder'}},
+               {'requestStatus': 'Accepted', 'status': 'Online', 'user': {'id': 'rot-id', 'name': 'rot'}},
+               {'requestStatus': 'Sent', 'status': 'Offline', 'user': {'id': 'schwarz-id', 'name': 'schwarz'}},
+               {'status': 'Incoming', 'user': {'id': 'old-shape', 'name': 'blau'}}]
 
     def respond(request):
         path = request.url.path

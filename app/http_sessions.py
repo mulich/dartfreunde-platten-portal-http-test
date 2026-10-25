@@ -416,7 +416,8 @@ class HttpSessions:
         if not isinstance(rows, list):
             raise SessionError('unknown_friends')
         for row in rows:
-            if not isinstance(row, dict) or row.get('status') != 'Incoming':
+            # requestStatus is the friendship state; status is the online state.
+            if not isinstance(row, dict) or row.get('requestStatus') != 'Incoming':
                 continue
             user = row.get('user') if isinstance(row.get('user'), dict) else {}
             name, uid = str(user.get('name') or ''), user.get('id') or row.get('userId')
