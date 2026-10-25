@@ -278,3 +278,17 @@ def test_invitation_diagnostics_are_read_only_and_do_not_include_credentials(cli
     assert data['invitation_revision'] == client.get('/health').json()['invitation_revision']
     assert 'do-not-include' not in response.text and 'private-user-id' not in response.text
     assert 'authorization' not in response.text.lower()
+
+
+def test_activity_endpoints_without_signed_in_accounts(client, tmp_path, monkeypatch):
+    from app import activity
+    monkeypatch.setattr(main, 'id_log', activity.IdLog(tmp_path / 'ids.json'))
+    assert client.get('/api/activity').json() == {'players': [], 'boards': [
+        {'id': b, 'name': n, 'visible': False, 'match': None} for b, n in activity.BOARD_NAMES.items()]}
+    board = next(iter(activity.BOARD_NAMES))
+    assert client.post(f'/api/boards/{board}/abort', json={'match_id': 'm1'}).status_code == 403
+    response = client.post(f'/api/boards/{board}/abort', headers=ORIGIN, json={'match_id': 'm1'})
+    assert response.status_code == 409 and 'Board-Besitzer' in response.json()['detail']
+    response = client.post('/api/lobbies/l1/abort', headers=ORIGIN)
+    assert response.status_code == 409 and response.json()['detail'] == 'Lobby existiert nicht mehr.'
+    assert client.get('/api/autodarts-ids').json() == []

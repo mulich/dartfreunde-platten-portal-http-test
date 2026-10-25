@@ -6,3 +6,5 @@ textarea{font:inherit;width:100%;resize:vertical;background:var(--bg);color:#fff
 @media(max-width:480px){header{padding:0 12px;gap:10px}.brand{display:flex;align-items:center;gap:8px}.brand span{font-size:14px;max-width:145px}header .quiet{font-size:12px;padding:8px}.login-card .brand span{max-width:none}.login-card{padding:28px}}
 
 #pause-all{margin-left:auto;white-space:nowrap}
+
+.game-row{margin:.35rem 0;font-size:.85rem;line-height:1.4;overflow-wrap:anywhere}.game-row button{margin-left:.25rem;padding:.15rem .5rem;font-size:.8rem}.game-row a{font-family:ui-monospace,monospace;font-size:.75rem}

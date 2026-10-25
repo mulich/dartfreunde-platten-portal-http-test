@@ -19,7 +19,7 @@ from app.invitations import AutoAcceptor, SCAN
 from app import invitations
 from app.recovery import observe_account
 from app.http_sessions import HttpSessions, SessionError, BOARDS
-from app import http_test, http_sessions
+from app import http_test, http_sessions, activity
 
 DATA = Path(os.getenv("DATA_DIR", "data"))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -317,6 +317,80 @@ async def automation_diagnostics(ident: str):
             result['attempts'] = [{'invitation_id':key[1], 'count':value['count'], 'done':value['done']}
                                   for key,value in acceptor.attempts.items() if key[0]==ident][-10:]
     return result
+
+
+ACTIVITY_ERRORS = {
+    'match_changed': 'Auf der Scheibe läuft inzwischen ein anderes Match. Ansicht aktualisieren.',
+    'abort_not_permitted': 'Kein angemeldeter Account darf dieses Match abbrechen. Board-Besitzer oder Board-Account im Portal anmelden.',
+    'board_not_visible': 'Kein angemeldeter Account sieht diese Scheibe. Board-Besitzer oder Board-Account im Portal anmelden.',
+    'abort_not_confirmed': 'Autodarts hat den Abbruch nicht bestätigt. Ansicht aktualisieren und erneut prüfen.',
+    'lobby_host_not_signed_in': 'Der Gastgeber dieser Lobby ist im Portal nicht angemeldet.',
+    'lobby_not_found': 'Lobby existiert nicht mehr.',
+    'unknown_board': 'Unbekannte Scheibe.',
+}
+id_log = activity.IdLog(DATA / 'autodarts-ids.json')
+
+
+def activity_error(error):
+    return HTTPException(409, ACTIVITY_ERRORS.get(error.code, 'Autodarts-Abfrage fehlgeschlagen (%s%s).' % (
+        error.code, ' HTTP %s' % error.status if error.status else '')))
+
+
+def http_idents():
+    # Only running sessions; paused accounts stay untouched.
+    return [p['id'] for p in registry.items if http_service and http_service.summary(p['id'])['active']
+            and http_service.summary(p['id'])['authenticated']]
+
+
+@app.get('/api/activity')
+async def account_activity():
+    players = []
+    for ident in http_idents():
+        name = registry.get(ident)['name']
+        try:
+            games = await activity.player_activity(http_service, ident)
+            for game in games:
+                id_log.note('gesehen', game, account=http_service.account(ident).username)
+            players.append({'id': ident, 'name': name, 'games': games})
+        except SessionError as error:
+            players.append({'id': ident, 'name': name, 'error': activity_error(error).detail})
+    try:
+        boards = await activity.boards(http_service, http_idents()) if http_service else []
+        for board in boards:
+            if board.get('match'):
+                id_log.note('gesehen', board['match'], board=board['name'])
+    except SessionError as error:
+        boards, players = [], players + [{'error': activity_error(error).detail}]
+    return {'players': players, 'boards': boards}
+
+
+class MatchAbort(BaseModel):
+    match_id: str = Field(min_length=1, max_length=100)
+
+
+@app.post('/api/boards/{board}/abort')
+async def abort_board_match(board: str, body: MatchAbort):
+    try:
+        result = await activity.abort_match(http_service, http_idents(), board, body.match_id)
+    except SessionError as error:
+        raise activity_error(error)
+    id_log.note('abgebrochen', {'kind': 'match', 'id': body.match_id}, account=result.get('account'), board=result['board'])
+    return result
+
+
+@app.post('/api/lobbies/{lobby}/abort')
+async def abort_lobby(lobby: str):
+    try:
+        result = await activity.abort_lobby(http_service, http_idents(), lobby)
+    except SessionError as error:
+        raise activity_error(error)
+    id_log.note('gelöscht', {'kind': 'lobby', 'id': lobby}, account=result['host'])
+    return result
+
+
+@app.get('/api/autodarts-ids')
+async def autodarts_ids(limit: int = 100):
+    return id_log.entries[-max(1, min(limit, 500)):][::-1]
 
 
 class AutomationSettings(BaseModel):
