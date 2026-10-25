@@ -19,7 +19,7 @@ from app.invitations import AutoAcceptor, SCAN
 from app import invitations
 from app.recovery import observe_account
 from app.http_sessions import HttpSessions, SessionError, BOARDS
-from app import http_test
+from app import http_test, http_sessions
 
 DATA = Path(os.getenv("DATA_DIR", "data"))
 DATA.mkdir(parents=True, exist_ok=True)
@@ -201,11 +201,16 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.get("/health")
 async def health():
     return {"status": "ok", "invitation_revision": invitation_revision(),
+            'http_revision': http_revision(),
             'session_mode': 'http', 'test_instance': True}
 
 
 def invitation_revision():
     return hashlib.sha256(Path(invitations.__file__).read_bytes()).hexdigest()[:16]
+
+
+def http_revision():
+    return hashlib.sha256(Path(http_sessions.__file__).read_bytes()).hexdigest()[:16]
 
 
 @app.get("/login")
@@ -274,7 +279,8 @@ async def automation_diagnostics(ident: str):
     if not registry.get(ident):
         raise HTTPException(404, 'Spieler nicht gefunden')
     if http_service and http_service.store.read(ident):
-        return {'invitation_revision':invitation_revision(), **http_service.summary(ident)}
+        return {'invitation_revision':invitation_revision(), 'http_revision':http_revision(),
+                **http_service.summary(ident)}
     result = {'invitation_revision': invitation_revision(),
               'enabled': bool(registry.get(ident).get('auto_accept')),
               'identity_known': bool(account_identities.get(ident)),

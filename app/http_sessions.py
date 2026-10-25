@@ -370,6 +370,17 @@ class HttpSessions:
         return bool(row and row.get('isPending') is False
                     and row.get('hostId') == invite['host'] and row.get('boardId') == invite['board'])
 
+    @staticmethod
+    def host_boards(lobby, host):
+        # The native board selector uses userId OR hostId. A board account can
+        # host local players without being listed as a player itself.
+        players = lobby.get('players') or []
+        if not isinstance(players, list):
+            raise SessionError('unknown_lobby_players')
+        return sorted({p['boardId'] for p in players if isinstance(p, dict)
+                       and (p.get('userId') == host or p.get('hostId') == host)
+                       and not p.get('cpuPPR') and p.get('boardId')})
+
     async def tick(self, ident):
         async with self.locks.setdefault(ident, asyncio.Lock()):
             item = self.registry.get(ident)
@@ -383,12 +394,31 @@ class HttpSessions:
             notices = await account.request('GET', '/as/v0/notifications')
             if not isinstance(notices, list):
                 raise SessionError('unknown_notifications')
-            self.report(ident, 'Wartet auf Lobby-Einladung per HTTP', error=None)
+            observations = []
+            self.report(ident, 'Wartet auf Lobby-Einladung per HTTP', error=None,
+                        sender=None, lobby_id=None, http_status=None,
+                        expected_board=None, observed_host_boards=[], actual_board=None, actual_host=None,
+                        stage='notifications', checked_at=time.time(), invitations=observations)
             for notice in notices:
                 invite = self.invitation(notice)
                 if invite:
-                    await self.accept(ident, account, item, invite)
-                    return
+                    observation = {k: invite[k] for k in ('id', 'lobby', 'sender', 'board')}
+                    observations.append(observation)
+                    self.report(ident, 'Prüft Lobby-Einladung', sender=invite['sender'],
+                                lobby_id=invite['lobby'], error=None, http_status=None,
+                                stage='lobby', expected_board=invite['board'], observed_host_boards=[],
+                                actual_board=None, actual_host=None)
+                    try:
+                        await self.accept(ident, account, item, invite)
+                    except SessionError as error:
+                        self.report(ident, 'Einladung konnte nicht bestätigt werden',
+                                    error=error.code, http_status=error.status)
+                    observation.update({k: self.status[ident].get(k) for k in
+                                        ('message', 'stage', 'error', 'http_status', 'observed_host_boards')})
+                    # Inspect remaining invitations even if this one is expired,
+                    # already joined, waiting for its board or rejected by the API.
+                    if item.get('paused') or not item.get('auto_accept'):
+                        break
 
     async def accept(self, ident, account, item, invite):
         path = '/gs/v0/lobbies/' + invite['lobby']
@@ -399,14 +429,18 @@ class HttpSessions:
         if (lobby.get('id') != invite['lobby'] or lobby.get('host', {}).get('id') != invite['host']
                 or lobby.get('isPrivate') is not True or lobby.get('tournamentId')):
             raise SessionError('lobby_not_allowed')
-        host = self.own(lobby, invite['host'])
-        if not host or host.get('boardId') != invite['board']:
+        boards = self.host_boards(lobby, invite['host'])
+        self.report(ident, 'Prüft lokale Scheibe des Gastgebers',
+                    stage='host_board', observed_host_boards=boards)
+        if boards and boards != [invite['board']]:
             raise SessionError('host_board_not_confirmed')
         row = self.own(lobby, account.user_id)
         receipts = account.saved.setdefault('receipts', {})
         if not self.confirmed(row, invite):
             if row and row.get('isPending') is False:
-                self.report(ident, 'Bereits beigetreten, lokale Zuordnung noch nicht bestätigt')
+                self.report(ident, 'Bereits beigetreten, lokale Zuordnung noch nicht bestätigt',
+                            stage='membership', error='local_assignment_required',
+                            actual_board=row.get('boardId'), actual_host=row.get('hostId'))
                 return
             if await self.busy(account, invite['lobby']):
                 self.report(ident, 'Anderes Match oder andere Lobby aktiv – wartet auf Abschluss')
@@ -423,9 +457,9 @@ class HttpSessions:
             fresh = await account.request('GET', path, missing=True)
             if not fresh or fresh.get('host', {}).get('id') != invite['host']:
                 raise SessionError('lobby_changed')
-            fresh_host = self.own(fresh, invite['host'])
+            fresh_boards = self.host_boards(fresh, invite['host'])
             if (fresh.get('isPrivate') is not True or fresh.get('tournamentId')
-                    or not fresh_host or fresh_host.get('boardId') != invite['board']):
+                    or (fresh_boards and fresh_boards != [invite['board']])):
                 raise SessionError('lobby_changed')
             current_board = {**BOARDS, **self.settings.get('boards', {})}.get(invite['sender'].casefold())
             if (not item.get('auto_accept') or item.get('paused') or current_board != invite['board']
@@ -437,11 +471,13 @@ class HttpSessions:
                 if len(receipts) > 100:
                     del receipts[next(iter(receipts))]
                 account.persist()
-                self.report(ident, 'Nimmt Einladung per HTTP lokal an', sender=invite['sender'])
+                self.report(ident, 'Nimmt Einladung per HTTP lokal an', sender=invite['sender'],
+                            stage='join_with_host')
                 # Native /join/:id?hostId=... uses this endpoint and no boardId body.
                 # The service assigns the authenticated player to this host's board.
                 await account.request('POST', path + '/players/with-host/' + invite['host'], data={
                     'name': account.username, 'userId': account.user_id})
+            self.report(ident, 'Prüft Beitritt und lokale Board-Zuordnung', stage='membership')
             for _ in range(8):
                 if await self.local_membership(account, path, invite):
                     break
@@ -453,6 +489,7 @@ class HttpSessions:
         account.persist()
         self.report(ident, 'HTTP-Beitritt und lokales Board bestätigt',
                     last_accepted=time.time(), last_sender=invite['sender'],
-                    lobby_id=invite['lobby'], board_id=invite['board'], error=None)
+                    lobby_id=invite['lobby'], board_id=invite['board'], error=None,
+                    http_status=None, stage='confirmed')
         # Dismiss only this lobby notification, after confirmed local membership.
         await account.request('DELETE', '/as/v0/notifications/' + invite['id'], missing=True)

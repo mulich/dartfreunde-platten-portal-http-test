@@ -51,5 +51,29 @@ GET liefert ausschließlich die Teilnehmer- und Board-Zuordnung. Der Endpunkt
 `/api/http/peers/{id}` liest nur den gegenseitigen Freundesstatus dieser Accounts.
 Keine freie API-Proxy-Funktion und kein Export-Endpunkt für Zugangsdaten.
 
-Der erfolgreiche Test läuft auf Board Blau. Die Testlobby bleibt zur Inspektion
-bestehen. Die ursprünglichen Sitzungen im Produktivportal bleiben pausiert.
+Ein erster Test mit dierote als Gast war erfolgreich. Der anschließende Test mit
+Mulich als Gast war noch nicht erfolgreich: HTTP 403 beziehungsweise fehlende
+lokale Zuordnung. Eine vollständige Turnierserie ist weiterhin nicht bestätigt.
+Die ursprünglichen Sitzungen im Produktivportal bleiben pausiert.
+
+## Dummy-Gastgeber und Einladungsdiagnose
+
+Die Board-Accounts rot/blau/schwarz dürfen nach Lobby-Erstellung aus der
+Spielerliste entfernt werden. Der Lobby-Gastgeber bleibt maßgeblich. Eine fehlende
+eigene Spielerzeile verhindert den nativen Beitritt mit Gastgeber nicht mehr.
+Wenn andere lokale Spieler eine Scheibe des Gastgebers belegen, muss diese mit
+der konfigurierten Board-ID übereinstimmen. Erfolg wird erst nach bestätigter
+Mitgliedschaft, passendem hostId und passender boardId gemeldet. Eine bereits
+anderweitig angenommene Einladung wird nicht still als lokaler Erfolg behandelt.
+
+Fehler und Wartezustände einer Einladung stoppen die Verarbeitung der übrigen
+Einladungen nicht. `/api/players/{id}/automation-diagnostics` liefert pro Einladung
+Absender, Lobby, erwartete/beobachtete Scheibe, Verarbeitungsschritt und bereinigten
+Fehlercode. Keine Tokens oder Antworttexte von Autodarts. Alte Absender und
+HTTP-Statuscodes werden beim nächsten Scan zurückgesetzt. `/health` enthält
+zusätzlich `http_revision`, damit die tatsächlich installierte HTTP-Implementierung
+unabhängig von der alten Browser-Automatik erkannt wird.
+
+Referenz: aktuelle native Oberfläche vom 25.10.2026,
+`https://play.autodarts.com/assets/join_._lobbyId-Br90uBNN.js` und
+`https://play.autodarts.com/assets/lobby._lobbyId-DL3P1Vje.js`.

@@ -80,11 +80,73 @@ def test_match_starts_before_confirmation(tmp_path):
 def test_timeout_after_server_acceptance_does_not_post_twice(tmp_path):
     service,item,notice,lobby,calls=setup(tmp_path,timeout=True)
     async def run():
-        with pytest.raises(SessionError,match='network'):await service.tick('player')
+        await service.tick('player')
+        assert service.status['player']['error']=='network'
         await service.tick('player');await service.close()
     asyncio.run(run())
     assert len([c for c in calls if c[0]=='POST'])==1
     assert service.status['player'].get('last_accepted')
+
+
+def test_host_need_not_be_a_player_when_local_players_use_its_board(tmp_path):
+    service,item,notice,lobby,calls=setup(tmp_path)
+    lobby['players'][0]['userId']=None
+    async def run():
+        await service.tick('player');await service.close()
+    asyncio.run(run())
+    assert service.status['player']['stage']=='confirmed'
+    assert service.status['player']['sender']=='blau'
+
+
+def test_native_join_without_host_player_is_verified_after_join(tmp_path):
+    service,item,notice,lobby,calls=setup(tmp_path)
+    lobby['players'][0].update(userId=None,hostId=None,boardId=None)
+    async def run():
+        await service.tick('player');await service.close()
+    asyncio.run(run())
+    assert service.status['player']['stage']=='confirmed'
+    assert service.status['player']['board_id']==BOARDS['blau']
+
+
+def test_failed_old_invitation_does_not_hide_next_invitation(tmp_path):
+    service,item,notice,lobby,calls=setup(tmp_path)
+    old={**notice,'id':'old-notice','body':{'user':{'id':'old-host','name':'rot'},'lobby':{'id':'old-lobby'}}}
+    service.settings['hosts'].append('rot')
+    account=service.account('player');original=account.request
+    async def request(method,path,**kwargs):
+        if path=='/as/v0/notifications':return [old,notice]
+        if path=='/gs/v0/lobbies/old-lobby':
+            return {'id':'old-lobby','host':{'id':'old-host'},'isPrivate':True,
+                    'players':[{'userId':'old-host','boardId':'wrong-board'}]}
+        return await original(method,path,**kwargs)
+    account.request=request
+    service.report('player','old',sender='dierote',http_status=403)
+    async def run():
+        await service.tick('player');await service.close()
+    asyncio.run(run())
+    status=service.status['player']
+    assert status['sender']=='blau' and status['http_status'] is None
+    assert status['stage']=='confirmed'
+    assert status['invitations'][0]['sender']=='rot'
+    assert status['invitations'][0]['error']=='host_board_not_confirmed'
+    assert status['invitations'][1]['stage']=='confirmed'
+
+
+def test_no_invitation_clears_stale_sender_and_http_status(tmp_path):
+    service,*_=setup(tmp_path)
+    account=service.account('player');original=account.request
+    async def request(method,path,**kwargs):
+        if path=='/as/v0/notifications':return []
+        return await original(method,path,**kwargs)
+    account.request=request
+    service.report('player','old',sender='dierote',lobby_id='old',http_status=403)
+    async def run():
+        await service.tick('player');await service.close()
+    asyncio.run(run())
+    assert service.status['player']['sender'] is None
+    assert service.status['player']['http_status'] is None
+    assert service.status['player']['lobby_id'] is None
+    assert service.status['player']['invitations']==[]
 
 
 @pytest.mark.parametrize('change',['friend','host','public','board','busy','paused','disabled','wrong-identity'])
