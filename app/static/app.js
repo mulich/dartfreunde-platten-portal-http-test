@@ -24,7 +24,7 @@ $('pause-all').onclick=async()=>{
     notice('Alle Sitzungen pausiert. Gespeicherte Anmeldungen bleiben erhalten.');await refresh();
   }catch(e){notice(e.message);await refresh();}finally{button.disabled=false;}
 };
-$('delete').onclick=async()=>{const p=players.find(p=>p.id===selected);if(!confirm(`Sitzung von ${p?.name} und gespeicherte Anmeldung dauerhaft entfernen?`))return;const id=selected;disconnect();try{await api('players/'+id,'DELETE');selected=null;renderAutomation();$('viewer').hidden=true;$('empty').hidden=false;$('title').textContent='Alle Accounts. Ein Fenster.';$('connection').textContent='Keine Sitzung ausgewählt';refresh()}catch(e){notice(e.message)}};
+$('delete').onclick=async()=>{const p=players.find(p=>p.id===selected);if(!confirm(`Sitzung von ${p?.name} und gespeicherte Anmeldung dauerhaft entfernen?`))return;const id=selected;disconnect();try{await api('players/'+id,'DELETE');selected=null;renderAutomation();$('viewer').hidden=true;$('login-panel').hidden=true;$('http-state').hidden=true;$('empty').hidden=false;$('title').textContent='Alle Accounts. Ein Fenster.';$('connection').textContent='Keine Sitzung ausgewählt';refresh()}catch(e){notice(e.message)}};
 refresh();setInterval(refresh,5000);
 
 function renderAutomation(){const p=players.find(p=>p.id===selected);$('automation-panel').hidden=!p;if(!p)return;$('auto-accept').checked=!!p.auto_accept;$('auto-status').textContent=p.auto_accept?(p.automation?.message||'Wartet auf Lobby-Einladung'):'Automatik aus';$('auto-last').textContent=p.automation?.last_accepted?'Letzter bestätigter Beitritt: '+new Date(p.automation.last_accepted*1000).toLocaleTimeString('de-DE')+' · '+(p.automation.last_sender||''):''}
@@ -84,3 +84,4 @@ async function finishLogin(path,body,form){const button=form.querySelector('butt
 $('password-login').onsubmit=e=>{e.preventDefault();finishLogin('',{username:$('login-user').value.trim(),password:$('login-password').value},e.target)};
 $('code-request').onsubmit=e=>{e.preventDefault();finishLogin('/code',{email:$('login-email').value.trim()},e.target)};
 $('code-verify').onsubmit=e=>{e.preventDefault();finishLogin('/code/verify',{email:$('login-email').value.trim(),code:$('login-code').value.trim()},e.target)};
+for(const button of document.querySelectorAll('[data-delete-session]'))button.onclick=()=>$('delete').onclick();
