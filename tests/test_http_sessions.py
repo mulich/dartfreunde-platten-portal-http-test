@@ -149,6 +149,54 @@ def test_no_invitation_clears_stale_sender_and_http_status(tmp_path):
     assert service.status['player']['invitations']==[]
 
 
+def test_dummy_host_404_accepts_normally_then_waits_for_board_script(tmp_path,monkeypatch):
+    service,item,notice,lobby,calls=setup(tmp_path)
+    lobby['players'][0].update(userId=None,hostId=None,boardId=None)
+    account=service.account('player');original=account.request;writes=[];notices=[notice]
+    async def no_delay(*args):pass
+    monkeypatch.setattr('app.http_sessions.asyncio.sleep',no_delay)
+    async def request(method,path,**kwargs):
+        if path=='/as/v0/notifications':return list(notices)
+        if method=='POST':
+            writes.append(path)
+            if '/with-host/' in path:raise SessionError('http_error',404)
+            assert path=='/gs/v0/lobbies/lobby/players'
+            assert kwargs['data']=={'name':'Mulich','userId':'own'}
+            lobby['players'][1].update(isPending=False,hostId='own',boardId=None)
+            notices.clear()
+            return None
+        return await original(method,path,**kwargs)
+    account.request=request
+    async def run():
+        await service.tick('player')
+        assert not service.status['player'].get('last_accepted')
+        assert service.store.read('player')['receipts']['notice']['accepted']
+        await service.tick('player')
+        assert service.status['player']['error']=='local_assignment_required'
+        # The board host performs the native link after accepting both guests.
+        lobby['players'][1].update(hostId='host',boardId=BOARDS['blau'])
+        await service.tick('player');await service.close()
+    asyncio.run(run())
+    assert len(writes)==2
+    assert service.status['player']['stage']=='confirmed'
+
+
+@pytest.mark.parametrize('status,host_present',[(403,False),(404,True)])
+def test_no_normal_join_fallback_for_permission_error_or_existing_host(tmp_path,status,host_present):
+    service,item,notice,lobby,calls=setup(tmp_path)
+    if not host_present:lobby['players'][0].update(userId=None,hostId=None,boardId=None)
+    account=service.account('player');original=account.request;posts=[]
+    async def request(method,path,**kwargs):
+        if method=='POST':posts.append(path);raise SessionError('http_error',status)
+        return await original(method,path,**kwargs)
+    account.request=request
+    async def run():
+        await service.tick('player');await service.tick('player');await service.close()
+    asyncio.run(run())
+    assert len(posts)==1 and '/with-host/' in posts[0]
+    assert service.status['player']['http_status']==status
+
+
 @pytest.mark.parametrize('change',['friend','host','public','board','busy','paused','disabled','wrong-identity'])
 def test_never_joins_unapproved_or_busy_accounts(tmp_path,change):
     service,item,notice,lobby,calls=setup(tmp_path,busy=change=='busy')

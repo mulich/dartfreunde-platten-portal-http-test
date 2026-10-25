@@ -66,6 +66,18 @@ der konfigurierten Board-ID übereinstimmen. Erfolg wird erst nach bestätigter
 Mitgliedschaft, passendem hostId und passender boardId gemeldet. Eine bereits
 anderweitig angenommene Einladung wird nicht still als lokaler Erfolg behandelt.
 
+Realer Befund: Die Einladung von Blau wurde erkannt, aber der native Aufruf
+`players/with-host/{host}` antwortete nach Entfernen des Dummy-Spielers mit 404.
+Nur in diesem Fall und nach erneuter Prüfung derselben privaten Gastgeber-Lobby
+wird der normale native Beitritt `POST players` verwendet. Es werden weder
+fremde Host-Rechte noch ein Board auf Verdacht gesetzt. Das Board-Script ordnet
+die angenommenen Spieler anschließend über seinen eigenen Gastgeber-Account zu.
+Bis dahin meldet das Portal ausdrücklich eine noch fehlende lokale Zuordnung.
+Bestätigte normale Beitritte werden auch weiter geprüft, wenn Autodarts die
+Einladungsbenachrichtigung bereits entfernt hat. Ein 403 löst diesen Rückfall
+nicht aus. Während der Wiederholungspause bleibt der tatsächliche HTTP-Fehler
+sichtbar.
+
 Fehler und Wartezustände einer Einladung stoppen die Verarbeitung der übrigen
 Einladungen nicht. `/api/players/{id}/automation-diagnostics` liefert pro Einladung
 Absender, Lobby, erwartete/beobachtete Scheibe, Verarbeitungsschritt und bereinigten
