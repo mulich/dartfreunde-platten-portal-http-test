@@ -3,7 +3,7 @@ function notice(text){$('notice').textContent=text;$('notice').hidden=!text}
 async function api(path,method='GET',body){const res=await fetch('/api/'+path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});if(!res.ok){let data;try{data=await res.json()}catch{}throw Error(data?.detail||'Anfrage fehlgeschlagen')}return res.json()}
 async function refresh(){try{players=await api('players');$('count').textContent=players.length;const list=$('players');list.replaceChildren();for(const p of players){const b=document.createElement('button');b.className='player'+(p.id===selected?' selected':'');const icon=document.createElement('span');icon.className='avatar';icon.textContent=p.name.slice(0,2).toUpperCase();const text=document.createElement('span');text.className='player-name';text.textContent=p.name;const status=document.createElement('small');const game=activityText(p.id);status.textContent=game?game:p.status==='running'?(p.http_session?.active?(p.http_session.transport_connected?'● HTTP verbunden':'HTTP verbindet …'):'Anmelde-Browser'):p.status==='starting'?'Wird gestartet …':p.error?'Start fehlgeschlagen':'Pausiert';text.append(status);b.append(icon,text);b.onclick=()=>select(p.id);list.append(b)}renderAutomation();renderHttpSession()}catch(e){notice(e.message)}}
 function disconnect(){epoch++;if(socket){socket.onclose=null;socket.close();socket=null}}
-async function select(id){disconnect();const current=epoch;selected=id;const p=players.find(p=>p.id===id);$('title').textContent=p?.name||'Spieler';$('empty').hidden=true;renderAutomation();$('viewer').hidden=false;$('frame').removeAttribute('src');$('loading').hidden=false;$('loading').textContent='Sitzung wird geöffnet …';$('connection').textContent='Verbinde …';notice('');refresh();try{await api('players/'+id+'/start','POST');if(current!==epoch)return;await refresh();const active=players.find(p=>p.id===id);if(active?.browser_open)connect(id,current);else renderHttpSession()}catch(e){if(current===epoch){notice(e.message);$('loading').textContent='Start fehlgeschlagen. Spieler erneut auswählen.';$('connection').textContent='Nicht verbunden'}}}
+async function select(id){disconnect();const current=epoch;selected=id;const p=players.find(p=>p.id===id);$('title').textContent=p?.name||'Spieler';$('empty').hidden=true;renderAutomation();if(p&&!p.http_session?.authenticated&&!p.browser_open){showLogin();return}$('login-panel').hidden=true;$('viewer').hidden=false;$('frame').removeAttribute('src');$('loading').hidden=false;$('loading').textContent='Sitzung wird geöffnet …';$('connection').textContent='Verbinde …';notice('');refresh();try{await api('players/'+id+'/start','POST');if(current!==epoch)return;await refresh();const active=players.find(p=>p.id===id);if(active?.browser_open)connect(id,current);else renderHttpSession()}catch(e){if(current===epoch){notice(e.message);$('loading').textContent='Start fehlgeschlagen. Spieler erneut auswählen.';$('connection').textContent='Nicht verbunden'}}}
 function connect(id,current){socket=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws/'+id);socket.onmessage=e=>{if(current!==epoch)return;const data=JSON.parse(e.data);if(data.type==='frame'){$('frame').src='data:image/jpeg;base64,'+data.image;$('url').textContent=data.url;$('loading').hidden=true;$('connection').textContent='Sitzung aktiv'}};socket.onclose=()=>{if(current!==epoch)return;$('connection').textContent='Ansicht getrennt';$('loading').hidden=false;$('loading').textContent='Spieler erneut auswählen, um die Ansicht zu verbinden.'};socket.onerror=()=>notice('Die Ansicht konnte nicht verbunden werden. Spieler erneut auswählen.')}
 function send(data){if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(data))}
 $('add').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;try{const p=await api('players','POST',{name:$('name').value});$('name').value='';await refresh();await select(p.id)}catch(e){notice(e.message)}finally{button.disabled=false}};
@@ -34,7 +34,7 @@ api('automation').then(result=>{$('hosts').value=result.hosts.join('\n')}).catch
 
 function renderHttpSession(){
   const p=players.find(p=>p.id===selected),http=p?.http_session;
-  const active=!!http?.authenticated&&!p.browser_open;
+  const active=!!http?.authenticated&&!p.browser_open&&$('login-panel').hidden;
   $('http-state').hidden=!active;
   if(active){disconnect();$('viewer').hidden=true;$('empty').hidden=true;
     $('connection').textContent=http.transport_connected?'HTTP-Verbindung aktiv':http.active?'HTTP verbindet …':'Pausiert';
@@ -42,7 +42,8 @@ function renderHttpSession(){
     $('http-message').textContent=http.automation?.message||'HTTP-Sitzung wird vorbereitet';
   }
 }
-$('http-login').onclick=async()=>{try{
+$('http-login').onclick=()=>showLogin();
+$('browser-login').onclick=async()=>{$('login-panel').hidden=true;try{
   await api('players/'+selected+'/login','POST');$('http-state').hidden=true;
   $('viewer').hidden=false;$('loading').hidden=false;$('loading').textContent='Anmeldung wird geöffnet …';
   disconnect();connect(selected,epoch);await refresh();
@@ -77,3 +78,9 @@ function renderActivity(){
 }
 async function loadActivity(){try{activity=await api('activity');renderActivity();refresh();const log=await api('autodarts-ids?limit=30');const list=$('id-log');list.replaceChildren(...log.map(e=>{const row=document.createElement('div');row.className='game-row';row.append(new Date(e.at*1000).toLocaleString('de-DE')+' · '+e.event+' · '+(e.board||e.account||'')+' · '+(e.players||[]).join(' – ')+' ',idLink(e.kind,e.id));return row}));if(!log.length)list.textContent='Noch keine IDs.'}catch(e){$('boards-status').textContent=e.message}}
 loadActivity();setInterval(()=>{if(!document.hidden)loadActivity()},15000);
+
+function showLogin(){disconnect();$('viewer').hidden=true;$('http-state').hidden=true;$('empty').hidden=true;$('login-panel').hidden=false;$('code-verify').hidden=true;$('connection').textContent='Nicht angemeldet';$('login-user').focus()}
+async function finishLogin(path,body,form){const button=form.querySelector('button');button.disabled=true;try{const result=await api('players/'+selected+'/http-login'+path,'POST',body);if(result.code_sent){$('code-verify').hidden=false;$('login-code').focus();notice('Code gesendet. Bitte E-Mail prüfen.');return}$('login-password').value='';$('login-code').value='';$('login-panel').hidden=true;notice('Angemeldet als '+result.account+'. HTTP-Sitzung läuft.');await refresh();renderHttpSession()}catch(e){notice(e.message)}finally{button.disabled=false}}
+$('password-login').onsubmit=e=>{e.preventDefault();finishLogin('',{username:$('login-user').value.trim(),password:$('login-password').value},e.target)};
+$('code-request').onsubmit=e=>{e.preventDefault();finishLogin('/code',{email:$('login-email').value.trim()},e.target)};
+$('code-verify').onsubmit=e=>{e.preventDefault();finishLogin('/code/verify',{email:$('login-email').value.trim(),code:$('login-code').value.trim()},e.target)};

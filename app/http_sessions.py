@@ -216,6 +216,26 @@ class HttpSessions:
         await account.verify_identity()
         self.report(ident, 'Anmeldung übernommen – HTTP-Sitzung bereit')
 
+    async def credential_login(self, ident, path, body):
+        """Native HTTP login (password or e-mail code). Credentials are never stored or logged."""
+        if path not in ('/auth/v1/login', '/auth/v1/login/otp', '/auth/v1/login/otp/verify'):
+            raise SessionError('invalid_login')
+        response = await self.account(ident).raw('POST', API + path, json={**body, 'client_id': 'autodarts-play'})
+        if response.status_code == 429:
+            raise SessionError('login_rate_limited', 429)
+        if 400 <= response.status_code < 500:
+            raise SessionError('login_rejected', response.status_code)
+        if not 200 <= response.status_code < 300:
+            raise SessionError('http_error', response.status_code)
+        if path == '/auth/v1/login/otp':
+            return False
+        try:
+            tokens = response.json()
+        except ValueError:
+            raise SessionError('invalid_response') from None
+        await self.adopt(ident, tokens)
+        return True
+
     async def start(self, ident):
         item = self.registry.get(ident)
         if not item or item.get('paused'):

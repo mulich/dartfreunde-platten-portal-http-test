@@ -640,6 +640,61 @@ async def login_browser(ident: str):
     return {'ok':True}
 
 
+class PasswordLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=500)
+
+
+class CodeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+
+
+class CodeLogin(CodeRequest):
+    code: str = Field(min_length=1, max_length=20)
+
+
+LOGIN_ERRORS = {'login_rejected': 'Anmeldung abgelehnt. Zugangsdaten bzw. Code prüfen.',
+                'login_rate_limited': 'Zu viele Versuche. Kurz warten und erneut versuchen.',
+                'account_changed': 'Diese Sitzung gehört zu einem anderen Autodarts-Account. Neue Sitzung anlegen.'}
+
+
+async def http_login(ident, path, body):
+    item = registry.get(ident)
+    if not item:
+        raise HTTPException(404, 'Spieler nicht gefunden')
+    async with player_lock(ident):
+        try:
+            done = await http_service.credential_login(ident, path, body)
+        except SessionError as error:
+            raise HTTPException(409, LOGIN_ERRORS.get(error.code, 'Anmeldung fehlgeschlagen (%s).' % error.code))
+        if not done:
+            return {'ok': True, 'code_sent': True}
+        item.pop('paused', None)
+        registry.save()
+        account_identities[ident] = http_service.account(ident).user_id
+        errors.pop(ident, None)
+        context = contexts.pop(ident, None)
+        if context:
+            await context.close()
+    await http_service.start(ident)
+    return {'ok': True, 'account': http_service.account(ident).username}
+
+
+@app.post('/api/players/{ident}/http-login')
+async def login_password(ident: str, body: PasswordLogin):
+    return await http_login(ident, '/auth/v1/login', {'username': body.username, 'password': body.password})
+
+
+@app.post('/api/players/{ident}/http-login/code')
+async def login_code_request(ident: str, body: CodeRequest):
+    return await http_login(ident, '/auth/v1/login/otp', {'email': body.email})
+
+
+@app.post('/api/players/{ident}/http-login/code/verify')
+async def login_code_verify(ident: str, body: CodeLogin):
+    return await http_login(ident, '/auth/v1/login/otp/verify', {'email': body.email, 'code': body.code})
+
+
 @app.post("/api/players/{ident}/stop")
 async def stop(ident: str):
     if not registry.get(ident):

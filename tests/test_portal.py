@@ -292,3 +292,20 @@ def test_activity_endpoints_without_signed_in_accounts(client, tmp_path, monkeyp
     response = client.post('/api/lobbies/l1/abort', headers=ORIGIN)
     assert response.status_code == 409 and response.json()['detail'] == 'Lobby existiert nicht mehr.'
     assert client.get('/api/autodarts-ids').json() == []
+
+
+def test_http_login_endpoint_reports_code_and_rejections(client, monkeypatch):
+    player = client.post('/api/players', headers=ORIGIN, json={'name': 'Rot'}).json()
+    async def login(ident, path, body):
+        if body.get('password') == 'bad': raise main.SessionError('login_rejected', 401)
+        return path != '/auth/v1/login/otp'
+    monkeypatch.setattr(main.http_service, 'credential_login', login)
+    monkeypatch.setattr(main.http_service, 'start', AsyncMock())
+    monkeypatch.setattr(main.http_service, 'account', lambda i: SimpleNamespace(user_id='rot-id', username='rot'))
+    url = f"/api/players/{player['id']}/http-login"
+    assert client.post(url, json={'username': 'rot', 'password': 'pw'}).status_code == 403
+    bad = client.post(url, headers=ORIGIN, json={'username': 'rot', 'password': 'bad'})
+    assert bad.status_code == 409 and 'abgelehnt' in bad.json()['detail']
+    assert client.post(url + '/code', headers=ORIGIN, json={'email': 'r@example.test'}).json() == {'ok': True, 'code_sent': True}
+    assert client.post(url, headers=ORIGIN, json={'username': 'rot', 'password': 'pw'}).json() == {'ok': True, 'account': 'rot'}
+    assert not client.launch.called

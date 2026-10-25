@@ -136,3 +136,30 @@ def test_id_log_keeps_ids_once_and_survives_restart(tmp_path):
     for i in range(5):
         again.note('gesehen', {**game, 'id': f'x{i}'})
     assert len(json.loads((tmp_path / 'ids.json').read_text())) == 3
+
+
+def test_password_and_code_login_adopt_tokens_without_storing_credentials(tmp_path):
+    seen = []
+
+    def respond(request):
+        body = json.loads(request.content or b'{}')
+        seen.append((request.url.path, body))
+        if request.url.path == '/auth/v1/login':
+            if body.get('password') != 'pw': return httpx.Response(401, json={'error': {'code': 'invalid'}})
+            return httpx.Response(200, json=credentials('rot-id'))
+        if request.url.path == '/auth/v1/login/otp': return httpx.Response(204)
+        if request.url.path == '/auth/v1/login/otp/verify': return httpx.Response(200, json=credentials('blau-id'))
+        if request.url.path == '/auth/v1/account/me':
+            return httpx.Response(200, json={'id': 'rot-id'})
+        raise AssertionError(request.url.path)
+    svc, _ = service(tmp_path, respond, users=())
+    with pytest.raises(SessionError) as error:
+        asyncio.run(svc.credential_login('a', '/auth/v1/login', {'username': 'rot', 'password': 'bad'}))
+    assert error.value.code == 'login_rejected' and not svc.store.read('a')
+    assert asyncio.run(svc.credential_login('a', '/auth/v1/login', {'username': 'rot', 'password': 'pw'}))
+    saved = json.dumps(svc.store.read('a'))
+    assert 'rot-id' in saved and '"pw"' not in saved and 'password' not in saved
+    assert all(b.get('client_id') == 'autodarts-play' for p, b in seen if p.startswith('/auth/v1/login'))
+    assert asyncio.run(svc.credential_login('b', '/auth/v1/login/otp', {'email': 'b@example.test'})) is False
+    with pytest.raises(SessionError):
+        asyncio.run(svc.credential_login('b', '/auth/v1/register', {}))
