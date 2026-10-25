@@ -189,6 +189,7 @@ class HttpSessions:
         self.accounts, self.tasks, self.status, self.connected = {}, {}, {}, set()
         self.client_factory, self.connector = client_factory, connector
         self.locks = {}
+        self.friend_checked = {}
 
     def account(self, ident):
         if ident not in self.accounts:
@@ -401,6 +402,30 @@ class HttpSessions:
                        and (p.get('userId') == host or p.get('hostId') == host)
                        and not p.get('cpuPPR') and p.get('boardId')})
 
+    async def accept_board_friends(self, ident, account, notices):
+        # Friend requests from allowed board accounts only; checked on a request notice or once a minute.
+        now = time.time()
+        requested = any(isinstance(n, dict) and n.get('type') == 'friend-list:request' for n in notices)
+        if not requested and now - self.friend_checked.get(ident, 0) < 60:
+            return
+        self.friend_checked[ident] = now
+        allowed = {s.strip().casefold() for s in self.settings.get('hosts', []) if s.strip()}
+        rows = await account.request('GET', '/as/v0/friends')
+        if rows is None:
+            rows = []
+        if not isinstance(rows, list):
+            raise SessionError('unknown_friends')
+        for row in rows:
+            if not isinstance(row, dict) or row.get('status') != 'Incoming':
+                continue
+            user = row.get('user') if isinstance(row.get('user'), dict) else {}
+            name, uid = str(user.get('name') or ''), user.get('id') or row.get('userId')
+            if name.casefold() not in allowed or not uid:
+                continue
+            await account.request('POST', '/as/v0/friends/' + segment(uid))
+            self.report(ident, self.status.get(ident, {}).get('message', ''), friend_error=None,
+                        last_friend=name, last_friend_at=now)
+
     async def tick(self, ident):
         async with self.locks.setdefault(ident, asyncio.Lock()):
             item = self.registry.get(ident)
@@ -414,6 +439,10 @@ class HttpSessions:
             notices = await account.request('GET', '/as/v0/notifications')
             if not isinstance(notices, list):
                 raise SessionError('unknown_notifications')
+            try:
+                await self.accept_board_friends(ident, account, notices)
+            except SessionError as error:
+                self.report(ident, self.status.get(ident, {}).get('message', ''), friend_error=error.code)
             # Normal native joins may consume the notification before the board
             # script links the player. Keep checking this confirmed membership.
             notice_ids = {n.get('id') for n in notices if isinstance(n, dict)}

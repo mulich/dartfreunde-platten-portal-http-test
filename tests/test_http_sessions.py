@@ -35,6 +35,7 @@ def setup(tmp_path, *, finish=False, timeout=False, wrong_board=False, busy=Fals
         path=request.url.path
         if path=='/auth/v1/account/me':return httpx.Response(200,json={'id':'own'})
         if path=='/as/v0/notifications':return httpx.Response(200,json=[notice])
+        if path=='/as/v0/friends':return httpx.Response(200,json=[])
         if path=='/us/v0/match-id':return httpx.Response(200,json='other' if busy else None)
         if path=='/gs/v0/matches/other/state':return httpx.Response(200,json={'finished':False})
         if path=='/gs/v0/lobbies':return httpx.Response(200,json=[lobby])

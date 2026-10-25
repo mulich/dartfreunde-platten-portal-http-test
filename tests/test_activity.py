@@ -163,3 +163,27 @@ def test_password_and_code_login_adopt_tokens_without_storing_credentials(tmp_pa
     assert asyncio.run(svc.credential_login('b', '/auth/v1/login/otp', {'email': 'b@example.test'})) is False
     with pytest.raises(SessionError):
         asyncio.run(svc.credential_login('b', '/auth/v1/register', {}))
+
+
+def test_friend_requests_only_from_allowed_boards_are_accepted(tmp_path):
+    accepted = []
+    friends = [{'status': 'Incoming', 'user': {'id': 'blau-id', 'name': 'Blau'}},
+               {'status': 'Incoming', 'user': {'id': 'stranger', 'name': 'Fremder'}},
+               {'status': 'Accepted', 'user': {'id': 'rot-id', 'name': 'rot'}},
+               {'status': 'Sent', 'user': {'id': 'schwarz-id', 'name': 'schwarz'}}]
+
+    def respond(request):
+        path = request.url.path
+        if path == '/as/v0/friends': return httpx.Response(200, json=friends)
+        if request.method == 'POST' and path.startswith('/as/v0/friends/'):
+            accepted.append(path.rsplit('/', 1)[1]); return httpx.Response(200, json={})
+        raise AssertionError(path)
+    svc, _ = service(tmp_path, respond)
+    svc.settings['hosts'] = ['rot', 'blau', 'schwarz']
+    account = svc.account('own')
+    asyncio.run(svc.accept_board_friends('own', account, []))
+    assert accepted == ['blau-id'] and svc.status['own']['last_friend'] == 'Blau'
+    asyncio.run(svc.accept_board_friends('own', account, []))
+    assert accepted == ['blau-id']  # throttled without a new request notice
+    asyncio.run(svc.accept_board_friends('own', account, [{'type': 'friend-list:request'}]))
+    assert accepted == ['blau-id', 'blau-id']
