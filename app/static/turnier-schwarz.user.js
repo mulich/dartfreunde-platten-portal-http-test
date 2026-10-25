@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dartfreunde Platten – Turnier-Board Schwarz
 // @namespace    dartfreunde-platten-turnierplaner
-// @version      2.4.4
+// @version      2.4.5
 // @description  Feste Scheibenzuordnung, Steuerungsrechte, Vollbild und Ergebnisübernahme.
 // @match        https://play.autodarts.com/*
 // @run-at       document-start
@@ -181,7 +181,7 @@
     }).catch(()=>{});
     return pending;
   };
-  function show(text) { message = text; if(panel)panel.querySelector('[data-status]').textContent=text; }
+  function show(text) { message = text; if(panel){panel.querySelector('[data-status]').textContent=text;const fold=panel.querySelector('button[aria-expanded="false"]');if(fold)fold.title=`Turnierplaner · ${BOARD}: ${text}`;} }
   function request(url, method='GET', data, headers={}, timeout=12000) {
     if(accountChanged)throw new Error('Autodarts-Account gewechselt. Seite neu laden, um die Scheibe neu zu erkennen.');
     return new Promise((resolve, reject) => GM_xmlhttpRequest({url, method, timeout, anonymous:![SERVER,portalUrl()].includes(new URL(url).origin),
@@ -498,11 +498,17 @@
     const details=document.createElement('div');details.id='dfp-board-details-'+BOARD_ID;
     title.setAttribute('aria-controls',details.id);
     function renderFold() {
-      title.textContent=collapsed?`Darts · ${BOARD} ▸`:`Turnierplaner · ${BOARD} ▾`;
+      // Collapsed: a tiny corner button so native Autodarts controls stay clickable.
+      title.textContent=collapsed?'◎':`Turnierplaner · ${BOARD} ▾`;
+      title.title=collapsed?`Turnierplaner · ${BOARD}: ${message}`:'';
       title.setAttribute('aria-label',collapsed?'Turnierfenster ausklappen':'Turnierfenster einklappen');
       title.setAttribute('aria-expanded',String(!collapsed));
       details.hidden=collapsed;details.style.display=collapsed?'none':'block';
-      panel.style.padding=collapsed?'5px 8px':'12px';
+      full.style.display=collapsed?'none':'';
+      title.style.fontSize=collapsed?'15px':'12px';
+      Object.assign(panel.style,collapsed
+        ?{padding:'0',bottom:'4px',right:'4px',width:'26px',height:'26px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',opacity:'.75'}
+        :{padding:'12px',bottom:'12px',right:'12px',width:'',height:'',borderRadius:'8px',display:'block',opacity:'1'});
     }
     title.onclick=()=>{collapsed=!collapsed;GM_setValue(storage+'-collapsed',collapsed);renderFold();};
 
