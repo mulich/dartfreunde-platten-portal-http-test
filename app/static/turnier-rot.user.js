@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dartfreunde Platten – Turnier-Board Rot
 // @namespace    dartfreunde-platten-turnierplaner
-// @version      2.4.3
+// @version      2.4.4
 // @description  Feste Scheibenzuordnung, Steuerungsrechte, Vollbild und Ergebnisübernahme.
 // @match        https://play.autodarts.com/*
 // @run-at       document-start
@@ -11,12 +11,12 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
-// @connect      turnier.mulich.de
-// @connect      dartportal.mulich.de
-// @connect      192.168.178.137
+// @connect      dartturnier.hausi
+// @connect      dartportal.hausi
+// @connect      192.168.99.13
 // @connect      api.autodarts.com
-// @downloadURL  https://dartportal.mulich.de/static/turnier-rot.user.js
-// @updateURL    https://dartportal.mulich.de/static/turnier-rot.user.js
+// @downloadURL  http://dartportal.hausi/static/turnier-rot.user.js
+// @updateURL    http://dartportal.hausi/static/turnier-rot.user.js
 // ==/UserScript==
 
 (() => {
@@ -35,8 +35,9 @@
       return typeof sub==='string' && sub ? sub : '';
     } catch {return '';}
   }
-  const SERVER = 'https://turnier.mulich.de';
-  const PORTAL = 'https://dartportal.mulich.de';
+  const SERVER = 'http://dartturnier.hausi';
+  const PORTAL = 'http://dartportal.hausi';
+  const PORTAL_LAN = 'http://192.168.99.13:18082';
   const API = 'https://api.autodarts.com';
   const normalize = value => String(value || '').trim().toLocaleLowerCase('de');
   function resolvePlayers(names, friends, me) {
@@ -103,7 +104,7 @@
     const successful=response.status>=200 && response.status<300;
     const text=typeof response.responseText==='string'?response.responseText.trim():'';
     if(response.status===401 && /(?:^|\r?\n)www-authenticate:\s*Basic\b/i.test(response.responseHeaders || '')) {
-      fail(service==='planner'?'Website-Passwortschutz: turnier.mulich.de auf diesem PC im selben Browser öffnen und anmelden.':service==='portal'?'Website-Passwortschutz: Accountzentrale auf diesem PC im selben Browser öffnen und anmelden (Tampermonkey-Menü „Accountzentrale anmelden“).':service==='autodarts'?'Autodarts-Anmeldung abgelehnt. Autodarts auf diesem PC neu laden und gegebenenfalls erneut anmelden.':'Website-Passwortschutz blockiert diesen Server.');
+      fail(service==='planner'?'Website-Passwortschutz: dartturnier.hausi auf diesem PC im selben Browser öffnen und anmelden.':service==='portal'?'Website-Passwortschutz: Accountzentrale auf diesem PC im selben Browser öffnen und anmelden (Tampermonkey-Menü „Accountzentrale anmelden“).':service==='autodarts'?'Autodarts-Anmeldung abgelehnt. Autodarts auf diesem PC neu laden und gegebenenfalls erneut anmelden.':'Website-Passwortschutz blockiert diesen Server.');
     }
     if(response.status===401 && service==='autodarts')fail('Autodarts-Anmeldung abgelaufen oder abgelehnt. Seite neu laden und gegebenenfalls erneut anmelden.');
     let body;
@@ -191,7 +192,7 @@
     }));
   }
   const planner = (path, data) => request(SERVER+path, 'POST', {instance, ...data}, {'X-Board-ID':BOARD_ID});
-  function portalUrl() {return GM_getValue(storage+'-portal-url',PORTAL);}
+  function portalUrl() {const saved=GM_getValue(storage+'-portal-url',PORTAL);return [PORTAL,PORTAL_LAN].includes(saved)?saved:PORTAL;}
   const autodarts = async (path, method='GET', data) => {
     if(!bearer)throw new Error('Wartet auf erneuerte Autodarts-Anmeldung. Bei Bedarf Autodarts-Seite neu laden.');
     const usedToken=bearer;
@@ -482,9 +483,9 @@
   GM_registerMenuCommand(`Turnier-Board: starten/pausieren`,toggle);
   GM_registerMenuCommand('Turnier-Board: Accountzentrale anmelden',()=>unsafeWindow.open(portalUrl(),'_blank','noopener'));
   GM_registerMenuCommand('Turnier-Board: Accountzentrale-Adresse',()=>{
-    const value=unsafeWindow.prompt('Accountzentrale: https://dartportal.mulich.de oder http://192.168.178.137:18080',portalUrl());
+    const value=unsafeWindow.prompt('Accountzentrale: '+PORTAL+' oder '+PORTAL_LAN,portalUrl());
     if(value===null)return;
-    try{const u=new URL(value);if(![PORTAL,'http://192.168.178.137:18080'].includes(u.origin))throw new Error();GM_setValue(storage+'-portal-url',u.origin);show('Adresse der Accountzentrale gespeichert.');}
+    try{const u=new URL(value);if(![PORTAL,PORTAL_LAN].includes(u.origin))throw new Error();GM_setValue(storage+'-portal-url',u.origin);show('Adresse der Accountzentrale gespeichert.');}
     catch{show('Ungültige Adresse der Accountzentrale.');}
   });
   function mount() {

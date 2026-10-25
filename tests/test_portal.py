@@ -191,15 +191,15 @@ def test_production_board_script_links_hidden_in_test_portal(client):
         assert response.status_code == 200
         assert url not in html
         assert ident in response.text
-        assert 'https://turnier.mulich.de' in response.text
-        assert f'https://dartportal.mulich.de{url}' in response.text
+        assert 'http://dartturnier.hausi' in response.text
+        assert f'http://dartportal.hausi{url}' in response.text
 
 
 def test_shared_tournament_board_script_download(client):
     response=client.get('/static/turnier-board.user.js')
     assert response.status_code == 200
     assert 'function identifyBoard()' in response.text
-    assert 'https://dartportal.mulich.de/static/turnier-board.user.js' in response.text
+    assert 'http://dartportal.hausi/static/turnier-board.user.js' in response.text
 
 
 def test_tournament_activates_only_matching_existing_sessions_and_pause_is_durable(client):
