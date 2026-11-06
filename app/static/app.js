@@ -63,7 +63,7 @@ $('test-host-form').onsubmit=async e=>{e.preventDefault();const name=$('test-hos
 let activity={players:[],boards:[]};
 function gameText(g){const others=g.opponents?.length?g.opponents.join(', '):'niemandem';return (g.kind==='match'?'Im Spiel mit ':'In Lobby'+(g.host?' von '+g.host:'')+' mit ')+others+(g.boards?.length?' · '+g.boards.join('/'):'')+(g.pending?' (eingeladen)':'')}
 function activityText(id){const games=activity.players.find(p=>p.id===id)?.games||[];return games.length?'● '+games.map(gameText).join(' · '):''}
-function idLink(kind,id){const path=(kind==='match'?'matches/':'lobby/')+encodeURIComponent(id);const a=document.createElement('a');a.href='https://play-v1.autodarts.com/'+path;a.target='_blank';a.rel='noopener';a.textContent=id;return a}
+function idLink(kind,id){const path=(kind==='match'?'matches/':'lobby/')+encodeURIComponent(id);const a=document.createElement('a');a.href='https://play.autodarts.com/'+path;a.target='_blank';a.rel='noopener';a.textContent=id;return a}
 function abortButton(label,question,run){const b=document.createElement('button');b.type='button';b.className='danger';b.textContent=label;b.onclick=async()=>{if(!confirm(question))return;b.disabled=true;try{await run();notice('Abgebrochen. Es wurde nichts gewertet.');await loadActivity()}catch(e){notice(e.message);b.disabled=false}};return b}
 function renderActivity(){
   const box=$('boards-status');box.replaceChildren();
