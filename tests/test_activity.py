@@ -188,3 +188,19 @@ def test_friend_requests_only_from_allowed_boards_are_accepted(tmp_path):
     assert accepted == ['blau-id']  # throttled without a new request notice
     asyncio.run(svc.accept_board_friends('own', account, [{'type': 'friend-list:request'}]))
     assert accepted == ['blau-id', 'blau-id']
+
+
+def test_missing_consent_is_named_and_other_403_stay_generic(tmp_path):
+    bodies = iter([{'error': {'code': 'consent_required'}}, {'error': {'code': 'forbidden'}}, None])
+
+    def respond(request):
+        body = next(bodies)
+        return httpx.Response(403, json=body) if body else httpx.Response(403, text='denied')
+    svc, _ = service(tmp_path, respond)
+    with pytest.raises(SessionError) as error:
+        asyncio.run(activity.player_activity(svc, 'own'))
+    assert error.value.code == 'consent_required' and error.value.status == 403
+    for _ in range(2):
+        with pytest.raises(SessionError) as error:
+            asyncio.run(activity.player_activity(svc, 'own'))
+        assert error.value.code == 'http_error' and error.value.status == 403

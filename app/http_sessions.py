@@ -33,6 +33,14 @@ class SessionError(Exception):
         super().__init__(code)
 
 
+def consent_required(response):
+    # Autodarts answers every API call this way until the account accepted new policies.
+    try:
+        return response.json()['error']['code'] == 'consent_required'
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
 def claims(token):
     try:
         part = token.split('.')[1]
@@ -167,6 +175,8 @@ class HttpAccount:
                 continue
             if response.status_code == 404 and missing:
                 return None
+            if response.status_code == 403 and consent_required(response):
+                raise SessionError('consent_required', 403)
             if not 200 <= response.status_code < 300:
                 raise SessionError('http_error', response.status_code)
             if not response.content:
@@ -270,6 +280,7 @@ class HttpSessions:
                     messages = {'login_required': 'Anmeldung abgelaufen – erneut anmelden',
                         'account_changed': 'Accountwechsel erkannt – Anmeldung prüfen',
                         'network': 'Verbindung unterbrochen – erneuter Versuch',
+                        'consent_required': 'Zustimmung nötig – auf play.autodarts.com anmelden und den neuen Bedingungen zustimmen',
                         'identity_not_confirmed': 'Account konnte nicht bestätigt werden'}
                     self.report(ident, messages.get(error.code, 'Autodarts-Antwort nicht bestätigt'),
                                 error=error.code, http_status=error.status)
@@ -435,7 +446,7 @@ class HttpSessions:
             account = self.account(ident)
             await account.verify_identity()
             if not item.get('auto_accept'):
-                self.report(ident, 'HTTP-Verbindung aktiv – Annahme aus', error=None)
+                self.report(ident, 'HTTP-Verbindung aktiv – Annahme aus', error=None, http_status=None)
                 return
             notices = await account.request('GET', '/as/v0/notifications')
             if not isinstance(notices, list):
@@ -470,6 +481,8 @@ class HttpSessions:
                     try:
                         await self.accept(ident, account, item, invite)
                     except SessionError as error:
+                        if error.code == 'consent_required':
+                            raise
                         self.report(ident, 'Einladung konnte nicht bestätigt werden',
                                     error=error.code, http_status=error.status)
                         receipt = account.saved.get('receipts', {}).get(invite['id'])

@@ -327,6 +327,7 @@ ACTIVITY_ERRORS = {
     'lobby_host_not_signed_in': 'Der Gastgeber dieser Lobby ist im Portal nicht angemeldet.',
     'lobby_not_found': 'Lobby existiert nicht mehr.',
     'unknown_board': 'Unbekannte Scheibe.',
+    'consent_required': 'Zustimmung nötig: auf play.autodarts.com anmelden und den neuen Bedingungen zustimmen.',
 }
 id_log = activity.IdLog(DATA / 'autodarts-ids.json')
 
@@ -342,6 +343,11 @@ def http_idents():
             and http_service.summary(p['id'])['authenticated']]
 
 
+def usable_idents():
+    # A blocked account must not hide the boards or stop aborts through the others.
+    return [i for i in http_idents() if http_service.summary(i)['automation'].get('error') != 'consent_required']
+
+
 @app.get('/api/activity')
 async def account_activity():
     players = []
@@ -355,7 +361,7 @@ async def account_activity():
         except SessionError as error:
             players.append({'id': ident, 'name': name, 'error': activity_error(error).detail})
     try:
-        boards = await activity.boards(http_service, http_idents()) if http_service else []
+        boards = await activity.boards(http_service, usable_idents()) if http_service else []
         for board in boards:
             if board.get('match'):
                 id_log.note('gesehen', board['match'], board=board['name'])
@@ -371,7 +377,7 @@ class MatchAbort(BaseModel):
 @app.post('/api/boards/{board}/abort')
 async def abort_board_match(board: str, body: MatchAbort):
     try:
-        result = await activity.abort_match(http_service, http_idents(), board, body.match_id)
+        result = await activity.abort_match(http_service, usable_idents(), board, body.match_id)
     except SessionError as error:
         raise activity_error(error)
     id_log.note('abgebrochen', {'kind': 'match', 'id': body.match_id}, account=result.get('account'), board=result['board'])
@@ -381,7 +387,7 @@ async def abort_board_match(board: str, body: MatchAbort):
 @app.post('/api/lobbies/{lobby}/abort')
 async def abort_lobby(lobby: str):
     try:
-        result = await activity.abort_lobby(http_service, http_idents(), lobby)
+        result = await activity.abort_lobby(http_service, usable_idents(), lobby)
     except SessionError as error:
         raise activity_error(error)
     id_log.note('gelöscht', {'kind': 'lobby', 'id': lobby}, account=result['host'])
